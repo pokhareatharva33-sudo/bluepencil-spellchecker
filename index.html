@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Bluepencil — a browser-based NLP spell checker and spelling correction demo.">
-<title>Bluepencil — NLP Spell Checker</title>
+<meta name="description" content="Bluepencil — a browser-based spelling correction tool.">
+<title>Bluepencil — Spell Checker & Corrector</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -250,6 +250,24 @@ a{color:inherit}
 .popover .pop-ignore{margin-top:3px;border-top:1px solid var(--line)}
 .popover .pop-ignore button{width:100%;background:none;border:0;text-align:left;padding:9px 8px;color:var(--muted);cursor:pointer;font-size:.75rem}
 .popover .pop-ignore button:hover{color:var(--primary)}
+.suggestions-panel{
+  margin-top:14px;padding:16px;border:1px solid var(--line);border-radius:16px;
+  background:var(--surface);box-shadow:var(--shadow-sm);
+}
+.suggestions-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.suggestions-panel-head h3{margin:3px 0 0;font-family:"Space Grotesk",sans-serif;font-size:.98rem}
+.panel-kicker{font-size:.62rem;letter-spacing:.11em;font-weight:700;color:var(--primary)}
+.suggestion-count{min-width:28px;height:28px;padding:0 8px;display:grid;place-items:center;border-radius:999px;background:var(--primary-soft);color:var(--primary);font-size:.75rem;font-weight:700}
+.suggestions-list{display:grid;gap:7px;max-height:245px;overflow:auto}
+.suggestion-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);text-align:left;cursor:pointer;color:var(--ink);transition:.15s ease}
+.suggestion-row:hover,.suggestion-row:focus-visible{border-color:var(--primary);transform:translateY(-1px);outline:none}
+.suggestion-pair{display:flex;align-items:center;gap:7px;min-width:0;font-size:.8rem}
+.suggestion-wrong{text-decoration:line-through;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.suggestion-arrow{color:var(--muted)}
+.suggestion-right{font-weight:700;color:var(--primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.suggestion-distance{font-size:.65rem;color:var(--muted);white-space:nowrap}
+.suggestions-empty{padding:8px 2px;font-size:.75rem;line-height:1.5;color:var(--muted)}
+@media(max-width:900px){.suggestions-panel{margin-top:12px}}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
 .reveal{animation:fadeUp .65s cubic-bezier(.2,.8,.2,1) both}
@@ -354,6 +372,18 @@ a{color:inherit}
           <div class="stat-card"><div class="stat-value" id="charCount">0</div><div class="stat-name">Characters</div></div>
           <div class="stat-card"><div class="stat-value" id="issueCount">—</div><div class="stat-name">Issues found</div></div>
           <div class="status-box"><strong>Private by design.</strong><br>Your text is processed locally by the page; there is no server request for the spell check.</div>
+          <div class="suggestions-panel" id="suggestionsPanel" aria-live="polite">
+            <div class="suggestions-panel-head">
+              <div>
+                <span class="panel-kicker">SMART SUGGESTIONS</span>
+                <h3>Suggested corrections</h3>
+              </div>
+              <span class="suggestion-count" id="suggestionCount">0</span>
+            </div>
+            <div class="suggestions-list" id="suggestionsList">
+              <div class="suggestions-empty" id="suggestionsEmpty">Run a check to see recommended replacements here.</div>
+            </div>
+          </div>
         </aside>
       </div>
     </div>
@@ -398,7 +428,7 @@ a{color:inherit}
 
   <footer class="footer">
     <div>
-      <strong>Bluepencil</strong> · NLP spelling correction demo<br>
+      <strong>Bluepencil</strong> · Spell Checker & Corrector<br>
       Dictionary: FrequencyWords / OpenSubtitles-derived English frequencies.
     </div>
     <div>
@@ -825,6 +855,62 @@ runCheck();
 
   const observer = new MutationObserver(updateStats);
   observer.observe(editor, {subtree:true, childList:true, characterData:true});
+})();
+</script>
+<script>
+/* Visible suggestions panel: shows the best correction for every highlighted word. */
+(() => {
+  const editor = document.getElementById('editor');
+  const list = document.getElementById('suggestionsList');
+  const count = document.getElementById('suggestionCount');
+  if (!editor || !list || !count) return;
+
+  function refreshSuggestions() {
+    const spans = [...editor.querySelectorAll('.misspelled')];
+    count.textContent = spans.length;
+
+    if (!spans.length) {
+      list.innerHTML = '<div class="suggestions-empty">No spelling issues found. Your text looks good!</div>';
+      return;
+    }
+
+    const rows = spans.map((span, index) => {
+      const word = span.dataset.word || span.textContent;
+      const result = suggest(word);
+      const best = result.suggestions && result.suggestions.length ? matchCase(word, result.suggestions[0]) : null;
+      if (!best) return `<div class="suggestions-empty">${escapeHtml(word)} — no dictionary suggestion available.</div>`;
+
+      return `<button class="suggestion-row" type="button" data-suggestion-index="${index}" aria-label="Replace ${escapeHtml(word)} with ${escapeHtml(best)}">
+        <span class="suggestion-pair"><span class="suggestion-wrong">${escapeHtml(word)}</span><span class="suggestion-arrow">→</span><span class="suggestion-right">${escapeHtml(best)}</span></span>
+        <span class="suggestion-distance">${result.dist} edit${result.dist === 1 ? '' : 's'}</span>
+      </button>`;
+    });
+
+    list.innerHTML = rows.join('');
+    list.querySelectorAll('[data-suggestion-index]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const span = spans[Number(btn.dataset.suggestionIndex)];
+        if (!span || !span.isConnected) return;
+        const result = suggest(span.dataset.word || span.textContent);
+        if (!result.suggestions.length) return;
+        span.textContent = matchCase(span.dataset.word || span.textContent, result.suggestions[0]);
+        span.classList.remove('misspelled', 'active', 'flagged');
+        span.removeAttribute('data-word');
+        closePopover();
+        refreshSuggestions();
+        if (typeof updateStats === 'function') updateStats();
+      });
+    });
+  }
+
+  const originalRunCheck = window.runCheck;
+  if (typeof originalRunCheck === 'function') {
+    // runCheck is lexical in the original script, so refresh after DOM mutations instead.
+    const observer = new MutationObserver(() => requestAnimationFrame(refreshSuggestions));
+    observer.observe(editor, {subtree:true, childList:true, characterData:true});
+  }
+
+  refreshSuggestions();
 })();
 </script>
 </body>
